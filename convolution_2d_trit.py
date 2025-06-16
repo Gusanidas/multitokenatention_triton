@@ -379,14 +379,14 @@ class Conv2dTritonFunction(Function):
 
 
 class Conv2dTriton(nn.Module):
-    def __init__(self, channels, kernel_size, causal=False, dtype=torch.bfloat16):
+    def __init__(self, channels, kernel_size, causal=False):
         super(Conv2dTriton, self).__init__()
         
         self.channels = channels
         self.kernel_size = kernel_size if isinstance(kernel_size, tuple) else (kernel_size, kernel_size)
         self.causal = causal
         
-        self.weight = nn.Parameter(torch.randn(channels, self.kernel_size[0], self.kernel_size[1], dtype=dtype))
+        self.weight = nn.Parameter(torch.randn(channels, self.kernel_size[0], self.kernel_size[1]))
         
         self._init_parameters()
     

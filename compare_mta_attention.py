@@ -54,9 +54,9 @@ def compare_models():
         mta=mta_config,
         dropout=DROPOUT,
         causal=CAUSAL,
-        dtype=DTYPE,
         use_mask=False,
     ).to(device)
+    model_triton.to(dtype=DTYPE)
     
     model_pytorch.reset_mta_parameters()
     model_triton.reset_mta_parameters()

@@ -10,7 +10,6 @@ class MTAAttentionTriton(nn.Module):
                  mta,
                  dropout: float,
                  causal: bool,
-                 dtype: torch.dtype = torch.float32,
                  use_mask: bool = False):
         super().__init__()
 
@@ -34,13 +33,11 @@ class MTAAttentionTriton(nn.Module):
             n_heads, 
             kernel_size=(mta.query_kernel_size, mta.key_kernel_size),
             causal=causal,
-            dtype=dtype
         )
 
         self.wpsm_triton = TritonLinearHead(
             n_heads,
             causal=causal,
-            dtype=dtype,
             output_value=float("-inf")
         )
         
@@ -48,13 +45,11 @@ class MTAAttentionTriton(nn.Module):
             n_heads, 
             kernel_size=(mta.after_sm_query_kernel_size, mta.after_sm_key_kernel_size),
             causal=causal, 
-            dtype=dtype
         )
         
         self.wposm_triton = TritonLinearHead(
             n_heads,
             causal=causal,
-            dtype=dtype
         )
         
         self.pad_key = mta.pad_key

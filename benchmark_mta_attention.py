@@ -35,7 +35,7 @@ BENCHMARK_CONFIGS = [
 WARMUP_RUNS = 3
 BENCHMARK_RUNS = 10
 DROPOUT = 0.0  
-DTYPE = torch.float32
+DTYPE = torch.bfloat16
 
 def benchmark_forward(model, xq, xk, xv, mask, chunk_start_ids, num_runs=BENCHMARK_RUNS, warmup=WARMUP_RUNS):
     """Benchmark forward pass only"""
@@ -138,9 +138,9 @@ def run_benchmarks():
             mta=mta_config,
             dropout=DROPOUT,
             causal=True,
-            dtype=DTYPE,
             use_mask=False,
         ).to(device)
+        model_triton.to(dtype=DTYPE)
         
         model_pytorch.reset_mta_parameters()
         model_triton.reset_mta_parameters()
