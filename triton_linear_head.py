@@ -3,8 +3,9 @@ import torch.nn as nn
 import triton
 import triton.language as tl
 
+SHORT_CONFIG = True
 
-def get_autotune_config(short=False):
+def get_autotune_config(short=SHORT_CONFIG):
     if short:
         return [
             triton.Config({'block_q': bq, 'p_group_size': pg}, num_stages=ns,
@@ -16,7 +17,7 @@ def get_autotune_config(short=False):
                           num_warps=nw) for bq in [32,64,128,256] for pg in [1,256,512,1024,1536] for ns in [1,2,3] for nw in [1,4,8]
     ]
 
-def get_autotune_config_bwd_input(short=False):
+def get_autotune_config_bwd_input(short=SHORT_CONFIG):
     if short:
         return [
             triton.Config({'block_q': bq, 'p_group_size': pg}, num_stages=3,
@@ -28,7 +29,7 @@ def get_autotune_config_bwd_input(short=False):
                           num_warps=8) for bq in [32,64,128,256] for pg in [1,256,512,1024,1536] for ns in [1,2,3] for nw in [1,4,8]
         ]
 
-def get_autotune_config_bwd_weight(short=False):
+def get_autotune_config_bwd_weight(short=SHORT_CONFIG):
     if short:
         return [
             triton.Config({'block_q': bq, 'p_group_size': pg}, num_stages=3,

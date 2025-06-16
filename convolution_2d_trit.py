@@ -6,7 +6,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 import random
 
-def get_autotune_config(short=False):
+SHORT_CONFIG = True
+
+def get_autotune_config(short=SHORT_CONFIG):
     if short:
         return [
             triton.Config({'BLOCK_SIZE_M': bm, 'BLOCK_SIZE_N': bn, 'GROUP_SIZE_N': gm, 'SIZE_RS_BLOCKS': s}, num_stages=3,
@@ -15,26 +17,26 @@ def get_autotune_config(short=False):
     else:
         return [
             triton.Config({'BLOCK_SIZE_M': bm, 'BLOCK_SIZE_N': bn, 'GROUP_SIZE_N': gm, 'SIZE_RS_BLOCKS': s}, num_stages=3,
-                          num_warps=8) for bm in [32,64,128,256] for bn in [32,64,128,256] for gm in [1,2,4,8,16,24,32] for s in [1,3,16,32,77]
+                          num_warps=8) for bm in [32,64,128,256] for bn in [32,64,128,256] for gm in [1,2,4,8,16,32] for s in [1,3,16,32]
         ]
 
-def get_autotune_config_bwd_input(short=False):
+def get_autotune_config_bwd_input(short=SHORT_CONFIG):
     if short:
         return [
             triton.Config({'BLOCK_SIZE_M': bm, 'BLOCK_SIZE_N': bn, 'GROUP_SIZE_N': gm, 'SIZE_RS_BLOCKS': s}, num_stages=3,
-                          num_warps=8) for bm in [32] for bn in [32] for gm in [1] for s in [1]
+                          num_warps=8) for bm in [64] for bn in [64] for gm in [1] for s in [1]
         ]
     else:
         return [
             triton.Config({'BLOCK_SIZE_M': bm, 'BLOCK_SIZE_N': bn, 'GROUP_SIZE_N': gm, 'SIZE_RS_BLOCKS': s}, num_stages=3,
-                          num_warps=8) for bm in [32,64,128,256] for bn in [32,64,128,256] for gm in [1,2,4,8,16,24,32] for s in [1,3,16,32,77]
+                          num_warps=8) for bm in [32,64,128,256] for bn in [32,64,128,256] for gm in [1,2,4,8,16,32] for s in [1,3,16,32]
         ]
 
-def get_autotune_config_bwd_weight(short=False):
+def get_autotune_config_bwd_weight(short=SHORT_CONFIG):
     if short:
         return [
             triton.Config({'BLOCK_SIZE': bs, 'ID_BLOCK_SIZE': ib}, num_stages=3,
-                          num_warps=8) for bs in [64] for ib in [1]
+                          num_warps=8) for bs in [64] for ib in [16]
         ]
     else:
         return [
@@ -44,7 +46,7 @@ def get_autotune_config_bwd_weight(short=False):
 
 @triton.autotune(
     configs=get_autotune_config(),
-    key=['N', 'C', 'K', 'R', 'S']
+    key=['C', 'R', 'S', 'pad_h', 'pad_w']
 )
 @triton.jit
 def conv_fwd_kernel(
@@ -135,12 +137,12 @@ def conv_fwd_kernel(
 # Backward kernel for input gradient (dx)
 @triton.autotune(
     configs=get_autotune_config_bwd_input(),
-    key=['N', 'C', 'K', 'R', 'S']
+    key=['C', 'R', 'S', 'pad_h', 'pad_w']
 )
 @triton.jit
 def conv_bwd_input_kernel(
     dx_ptr, dout_ptr, weight_ptr,
-    N, C, H, W, K, P, Q, pad_h, pad_w,
+    C, H, W, P, Q, pad_h, pad_w,
     R: tl.constexpr,
     S: tl.constexpr,
     causal: tl.constexpr,
@@ -219,12 +221,12 @@ def conv_bwd_input_kernel(
 # Backward kernel for weight gradient (dw)
 @triton.autotune(
     configs=get_autotune_config_bwd_weight(),
-    key=['N', 'C', 'K', 'R', 'S']
+    key=['C', 'R', 'S', 'pad_h', 'pad_w']
 )
 @triton.jit
 def conv_bwd_weight_kernel(
     dw_ptr, input_ptr, dout_ptr,
-    N, C, H, W, K, R, S, pad_h, pad_w,
+    N, C, H, W, R, S, pad_h, pad_w,
     P: tl.constexpr,
     Q: tl.constexpr,
     causal: tl.constexpr,
@@ -352,7 +354,7 @@ class Conv2dTritonFunction(Function):
             
             conv_bwd_input_kernel[grid](
                 grad_input, grad_output, weight,
-                N, C, H, W, C, P, Q, pad_h, pad_w,
+                C, H, W, P, Q, pad_h, pad_w,
                 R=R, S=S,
                 causal=ctx.causal,
             )
@@ -368,7 +370,7 @@ class Conv2dTritonFunction(Function):
             
             conv_bwd_weight_kernel[grid](
                 grad_weight, input, grad_output,
-                N, C, H, W, C, R, S, pad_h, pad_w,
+                N, C, H, W, R, S, pad_h, pad_w,
                 P=P, Q=Q, 
                 causal=ctx.causal,
             )
