@@ -270,7 +270,7 @@ class TritonLinearHead(nn.Module):
     Equivalent to: scores.transpose(1, -1) @ weight.T @ scores.transpose(1, -1).T
     """
     
-    def __init__(self, head_dim, causal=True, dtype=torch.float32, output_value=0.0):
+    def __init__(self, head_dim, causal=True, dtype=torch.bfloat16, output_value=0.0):
         super().__init__()
         self.head_dim = head_dim
         self.weight = nn.Parameter(torch.randn(head_dim, head_dim, dtype=dtype) / (head_dim ** 0.5))

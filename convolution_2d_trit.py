@@ -379,7 +379,7 @@ class Conv2dTritonFunction(Function):
 
 
 class Conv2dTriton(nn.Module):
-    def __init__(self, channels, kernel_size, causal=False, dtype=torch.float32):
+    def __init__(self, channels, kernel_size, causal=False, dtype=torch.bfloat16):
         super(Conv2dTriton, self).__init__()
         
         self.channels = channels
