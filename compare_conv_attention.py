@@ -71,7 +71,7 @@ class ConvAttention(nn.Module):
         # Apply attention to values
         output = torch.matmul(attn_weights, V)
 
-        return output, scores, conv_scores
+        return output, scores
 
     def _apply_convolution(self, scores):
         """Apply convolution to attention scores"""
@@ -107,9 +107,10 @@ def compare_conv_attention():
     n_heads = 8
     seq_len = 128
     head_dim = 64
-    kernel_size_q = 3
-    kernel_size_k = 3
+    kernel_size_q = 6
+    kernel_size_k = 11
     causal = True
+    dtype = torch.bfloat16
 
     print(
         f"Configuration: batch={batch_size}, heads={n_heads}, seq_len={seq_len}, head_dim={head_dim}"
@@ -126,13 +127,31 @@ def compare_conv_attention():
 
     # Create test inputs
     Q = torch.randn(
-        batch_size, n_heads, seq_len, head_dim, device=device, requires_grad=True
+        batch_size,
+        n_heads,
+        seq_len,
+        head_dim,
+        device=device,
+        requires_grad=True,
+        dtype=dtype,
     )
     K = torch.randn(
-        batch_size, n_heads, seq_len, head_dim, device=device, requires_grad=True
+        batch_size,
+        n_heads,
+        seq_len,
+        head_dim,
+        device=device,
+        requires_grad=True,
+        dtype=dtype,
     )
     V = torch.randn(
-        batch_size, n_heads, seq_len, head_dim, device=device, requires_grad=True
+        batch_size,
+        n_heads,
+        seq_len,
+        head_dim,
+        device=device,
+        requires_grad=True,
+        dtype=dtype,
     )
 
     print(f"Input tensors - Q: {Q.shape}, K: {K.shape}, V: {V.shape}")
@@ -144,44 +163,45 @@ def compare_conv_attention():
     )
 
     # Create models
-    pytorch_model = ConvAttention(n_heads, kernel_size_q, kernel_size_k).to(device)
+    pytorch_model = (
+        ConvAttention(n_heads, kernel_size_q, kernel_size_k).to(device).to(dtype)
+    )
 
     # Create softmax scale
     softmax_scale = 1.0 / (head_dim**0.5)
 
     print("\nTesting PyTorch implementation...")
     with torch.no_grad():
-        pytorch_output, pytorch_qk, pytorch_conv_out = pytorch_model(
-            Q, K, V, causal, softmax_scale
-        )
+        pytorch_output, pytorch_qk = pytorch_model(Q, K, V, causal, softmax_scale)
 
     print(f"PyTorch output shape: {pytorch_output.shape}")
     print(f"PyTorch QK shape: {pytorch_qk.shape}")
-    print(f"PyTorch conv_out shape: {pytorch_conv_out.shape}")
 
     print("\nTesting Triton implementation...")
     # Create Triton model with same parameters as PyTorch model
-    triton_model = TritonConvAttention(n_heads, (kernel_size_q, kernel_size_k), causal).to(device)
+    triton_model = (
+        TritonConvAttention(n_heads, (kernel_size_q, kernel_size_k))
+        .to(device)
+        .to(dtype)
+    )
     # Copy weights from PyTorch model
     triton_model.weight.data = pytorch_model.conv_weight.data.clone()
-    
+
     with torch.no_grad():
         triton_result = triton_model(Q, K, V, causal, softmax_scale)
 
         # Handle case where Triton kernel might only return final output
-        if isinstance(triton_result, tuple) and len(triton_result) == 3:
-            triton_output, triton_qk, triton_conv_out = triton_result
+        if isinstance(triton_result, tuple) and len(triton_result) == 2:
+            triton_output, triton_qk = triton_result
         elif triton_result is not None:
             triton_output = triton_result
             triton_qk = None
-            triton_conv_out = None
             print(
                 "Note: Triton kernel only returned final output, no intermediate values"
             )
         else:
             triton_output = None
             triton_qk = None
-            triton_conv_out = None
             print("Error: Triton kernel returned None")
 
     if triton_output is not None and hasattr(triton_output, "shape"):
@@ -241,23 +261,22 @@ def compare_conv_attention():
 
         return match_loose
 
-    # Compare final outputs
+    # Compare outputs
     print("\nForward Pass Comparisons:")
     final_match = compare_tensors("Final Output", pytorch_output, triton_output)
-    print()
-    qk_match = compare_tensors("QK", pytorch_qk, triton_qk)
-    print()
-    conv_out_match = compare_tensors("Conv Out", pytorch_conv_out, triton_conv_out)
 
-    # Note: We can't directly compare QK and conv_out with Triton kernel
-    # as the Triton kernel doesn't return these intermediate values
-    # But we can show the PyTorch intermediate values for reference
-    print(f"\nPyTorch Intermediate Values (for reference):")
+    # Only compare QK if Triton returns it
+    if triton_qk is not None:
+        print()
+        qk_match = compare_tensors("QK", pytorch_qk, triton_qk)
+    else:
+        qk_match = None
+        print("\nQK comparison skipped - Triton kernel doesn't return QK values")
+
+    # Show PyTorch QK values for reference
+    print(f"\nPyTorch QK Values (for reference):")
     print(
         f"  QK - Mean abs: {pytorch_qk.abs().mean().item():.8f}, Max abs: {pytorch_qk.abs().max().item():.8f}"
-    )
-    print(
-        f"  Conv Out - Mean abs: {pytorch_conv_out.abs().mean().item():.8f}, Max abs: {pytorch_conv_out.abs().max().item():.8f}"
     )
 
     # Overall summary
@@ -267,6 +286,8 @@ def compare_conv_attention():
 
     print("Forward pass matches:")
     print(f"  Final output (loose tolerance): {final_match}")
+    if qk_match is not None:
+        print(f"  QK scores (loose tolerance): {qk_match}")
 
     if not final_match:
         print("\nNote: Comparison failed. Possible reasons:")
@@ -286,7 +307,7 @@ def compare_conv_attention():
     # Plot output matrices for batch=0, head=0
     print(f"\nPlotting output matrices for batch=0, head=0...")
 
-    if pytorch_output is not None:
+    if pytorch_output is not None and pytorch_output.dtype == torch.float32:
         # Extract batch=0, head=0 for PyTorch
         pytorch_out_2d = pytorch_output[0, 0]  # [seq_len, head_dim]
         plot_matrix_colormap(
@@ -296,7 +317,7 @@ def compare_conv_attention():
             cmap="RdBu_r",
         )
 
-    if triton_output is not None and hasattr(triton_output, "shape"):
+    if triton_output is not None and triton_output.dtype == torch.float32:
         # Extract batch=0, head=0 for Triton
         triton_out_2d = triton_output[0][0]  # [seq_len, head_dim]
         plot_matrix_colormap(

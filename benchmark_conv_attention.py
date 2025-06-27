@@ -27,7 +27,7 @@ BENCHMARK_CONFIGS = [
 
 WARMUP_RUNS = 3
 BENCHMARK_RUNS = 10
-DTYPE = torch.float32
+DTYPE = torch.bfloat16
 
 
 class StandardAttention(nn.Module):
@@ -134,8 +134,8 @@ def run_benchmarks():
         )
 
         # Create models
-        kernel_size_q = 5
-        kernel_size_k = 7
+        kernel_size_q = 7
+        kernel_size_k = 11
         causal = True
         softmax_scale = 1.0 / (head_dim**0.5)
 
@@ -175,7 +175,7 @@ def run_benchmarks():
                 #    },
                 # )()
                 triton_model = (
-                    TritonConvAttention(n_heads, (kernel_size_q, kernel_size_k), causal)
+                    TritonConvAttention(n_heads, (kernel_size_q, kernel_size_k))
                     .to(device)
                     .to(DTYPE)
                 )
@@ -306,6 +306,8 @@ def run_benchmarks():
             f"Average Triton Conv vs Standard Attention: {avg_triton_vs_standard:.2f}x"
         )
 
+    softmax_scale = 1.0 / (head_dim**0.5)
+    causal = True
     # Memory usage comparison
     if device == "cuda":
         print("\n" + "=" * 80)
@@ -326,17 +328,17 @@ def run_benchmarks():
             V_mem = torch.randn(
                 batch_size, n_heads, seq_len, head_dim, device=device, dtype=DTYPE
             )
-            _ = conv_attention_mem(Q_mem, K_mem, V_mem)
+            _ = conv_attention_mem(Q_mem, K_mem, V_mem, causal, softmax_scale)
             conv_peak_mem = torch.cuda.max_memory_allocated() / 1024**2  # MB
 
             torch.cuda.reset_peak_memory_stats()
             standard_attention_mem = StandardAttention(n_heads).to(device)
-            _ = standard_attention_mem(Q_mem, K_mem, V_mem)
+            _ = standard_attention_mem(Q_mem, K_mem, V_mem, causal, softmax_scale)
             standard_peak_mem = torch.cuda.max_memory_allocated() / 1024**2  # MB
 
             torch.cuda.reset_peak_memory_stats()
             triton_model = TritonConvAttention(n_heads, (kernel_size_q, kernel_size_k))
-            _ = triton_model(Q_mem, K_mem, V_mem)
+            _ = triton_model(Q_mem, K_mem, V_mem, causal, softmax_scale)
             triton_peak_mem = torch.cuda.max_memory_allocated() / 1024**2  # MB
             print(f"Triton Conv Attention peak memory: {triton_peak_mem:.2f} MB")
 

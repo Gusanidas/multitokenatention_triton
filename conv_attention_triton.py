@@ -106,14 +106,6 @@ def _attn_fwd_inner(
             BLOCK_SIZE_Q=BLOCK_SIZE_Q,
             BLOCK_SIZE_K=BLOCK_SIZE_KV,
         )
-        # conv_out_offs = (
-        #     conv_out_ptr
-        #     + batch_id * stride_qk_batch
-        #     + channel_id * stride_qk_head
-        #     + offs_q[:, None] * stride_qk_row
-        #     + offs_kv[None, :] * stride_qk_col
-        # )
-        # tl.store(conv_out_offs, conv_out, mask=mask_conv)
 
         if STAGE == 2:
             mask = offs_q[:, None] >= (offs_kv[None, :])
@@ -125,10 +117,10 @@ def _attn_fwd_inner(
             conv_out = conv_out * softmax_scale - m_ij[:, None]
 
         conv_out = tl.where(mask_conv, conv_out, -1.0e6)
-        P_block = tl.math.exp(conv_out)
+        P_block = tl.math.exp2(conv_out)
         l_ij = tl.sum(P_block, 1)
 
-        alpha = tl.math.exp(m_i - m_ij)
+        alpha = tl.math.exp2(m_i - m_ij)
         l_i = l_i * alpha + l_ij
 
         v_block_ptr = (
@@ -142,6 +134,7 @@ def _attn_fwd_inner(
         V_block = tl.load(v_block_ptr, mask=mask_offs_v)
         # This computes the following: O_new = P x V + O_old * alpha
         O_block = O_block * alpha[:, None]
+        P_block = P_block.to(Q_block.dtype)
         O_block = tl.dot(P_block, V_block, O_block)
 
         m_i = m_ij
@@ -157,8 +150,8 @@ def _attn_fwd_inner(
             num_warps=num_warps,
         )
         for BLOCK_SIZE_Q in [32, 64]
-        for BLOCK_SIZE_KV in [32, 64, 128]
-        for num_stages in [2, 3]
+        for BLOCK_SIZE_KV in [128, 256]
+        for num_stages in [3]
         for num_warps in [8]
     ],
     key=["SEQ_LEN", "HEAD_DIM"],
@@ -233,6 +226,7 @@ def _attn_fwd(
         + offs_q[:, None] * stride_Q_seq
         + tl.arange(0, HEAD_DIM)[None, :] * stride_Q_dim
     )
+    Q_block = tl.load(q_block_ptr, mask=mask_offs_q[:, None])
 
     V_block_ptr = tl.make_block_ptr(
         base=V + qvk_offset,
@@ -256,13 +250,14 @@ def _attn_fwd(
 
     offs_kv = tl.arange(0, BLOCK_SIZE_KV)
 
-    m_i = tl.zeros([BLOCK_SIZE_Q], dtype=tl.float32) - float("inf")  # TODO: Handle this
+    m_i = tl.zeros([BLOCK_SIZE_Q], dtype=tl.float32) - float("inf")
     # l_i: the running sum. We have one for each query (as we sum the attention scores by rows)
-    l_i = tl.zeros([BLOCK_SIZE_Q], dtype=tl.float32) + 1.0  # TODO: Handle this as well
+    l_i = tl.zeros([BLOCK_SIZE_Q], dtype=tl.float32) + 1.0
     # acc: the accumulator for the output, which is a group of rows of the O matrix
     O_block = tl.zeros([BLOCK_SIZE_Q, HEAD_DIM], dtype=tl.float32)
 
-    Q_block = tl.load(q_block_ptr, mask=mask_offs_q[:, None])
+    # Convert to log2 scale
+    softmax_scale = softmax_scale * 1.44269504
 
     if STAGE == 1 or STAGE == 3:
         O_block, l_i, m_i = _attn_fwd_inner(
@@ -400,7 +395,7 @@ class TritonAttention(torch.autograd.Function):
 
         # M is the logsumexp for the backward pass, one for each query
         M = torch.empty(
-            (BATCH_SIZE, NUM_HEADS, SEQ_LEN), device=Q.device, dtype=torch.float32
+            (BATCH_SIZE, NUM_HEADS, SEQ_LEN), device=Q.device, dtype=Q.dtype
         )
 
         _attn_fwd[grid](
@@ -474,7 +469,7 @@ class TritonAttention(torch.autograd.Function):
 
 
 class TritonConvAttention(nn.Module):
-    def __init__(self, channels, kernel_size, causal=False):
+    def __init__(self, channels, kernel_size):
         super(TritonConvAttention, self).__init__()
 
         self.channels = channels
@@ -483,7 +478,6 @@ class TritonConvAttention(nn.Module):
             if isinstance(kernel_size, tuple)
             else (kernel_size, kernel_size)
         )
-        self.causal = causal
 
         self.weight = nn.Parameter(
             torch.randn(channels, self.kernel_size[0], self.kernel_size[1])

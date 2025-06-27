@@ -116,7 +116,8 @@ def qk_conv_fwd_kernel(
     )
     tl.debug_barrier()
 
-    acc = tl.zeros((BLOCK_SIZE_Q, BLOCK_SIZE_K), dtype=tl.float32)
+    acc = tl.zeros((BLOCK_SIZE_Q, BLOCK_SIZE_K), dtype=q_block.dtype)
+    # acc = tl.zeros((BLOCK_SIZE_Q, BLOCK_SIZE_K), dtype=tl.float32)
 
     for kernel_q_idx in range(0, kernel_size_q):
         for kernel_k_idx in range(0, kernel_size_k):
@@ -181,4 +182,5 @@ def qk_conv_fwd_kernel(
         & mask_k_right[None, :]
         & mask_k_idx[None, :]
     )
+    acc = acc.to(q_block.dtype)
     return acc, mask_o_block
