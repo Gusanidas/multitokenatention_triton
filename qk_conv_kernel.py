@@ -55,15 +55,12 @@ def qk_mult(
         k_block_ptr, mask=mask_k_col_idx[None, :]
     )  # (head_dim, BLOCK_SIZE_N)
 
-    qk_block = tl.dot(
-        q_block, k_block, input_precision="tf32x3"
-    )  # (BLOCK_SIZE_Q, BLOCK_SIZE_K)
+    qk_block = tl.dot(q_block, k_block)  # (BLOCK_SIZE_Q, BLOCK_SIZE_K)
 
     tl.store(
         qk_block_ptr,
         qk_block,
         mask=qk_mask,
-        # cache_modifier=".cs",
     )
 
 

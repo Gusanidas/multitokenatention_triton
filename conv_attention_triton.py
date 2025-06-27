@@ -140,7 +140,6 @@ def _attn_fwd_inner(
         )
         mask_offs_v = (offs_kv[:, None] < SEQ_LEN) & (offs_kv[:, None] >= 0)
         V_block = tl.load(v_block_ptr, mask=mask_offs_v)
-        # P_block = P_block.to(tl.float16)
         # This computes the following: O_new = P x V + O_old * alpha
         O_block = O_block * alpha[:, None]
         O_block = tl.dot(P_block, V_block, O_block)
